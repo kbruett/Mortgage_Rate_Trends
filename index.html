@@ -1,0 +1,432 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Rate Lock Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: status verdict on top, inputs + rate log side by side, then cost tables. Slate neutrals, one teal-blue accent, semantic status colors kept separate. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --fg: #16212b;
+  --muted: #5b6b79;
+  --line: #d9e0e6;
+  --accent: #0b6b8a;
+  --accent-ink: #ffffff;
+  --accent-soft: #e0f0f5;
+  --good: #1d7a4a;
+  --good-soft: #e1f3e8;
+  --warn: #a35a00;
+  --warn-soft: #fbeedb;
+  --crit: #b3261e;
+  --crit-soft: #fbe4e2;
+  --font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1820; --surface: #17232d; --fg: #e8eef3; --muted: #93a4b3; --line: #2a3a47;
+    --accent: #4bb6d6; --accent-ink: #08222c; --accent-soft: #14333f;
+    --good: #5fcf92; --good-soft: #133324; --warn: #f0b35c; --warn-soft: #3a2a12;
+    --crit: #ff8d84; --crit-soft: #411b19; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1820; --surface: #17232d; --fg: #e8eef3; --muted: #93a4b3; --line: #2a3a47;
+  --accent: #4bb6d6; --accent-ink: #08222c; --accent-soft: #14333f;
+  --good: #5fcf92; --good-soft: #133324; --warn: #f0b35c; --warn-soft: #3a2a12;
+  --crit: #ff8d84; --crit-soft: #411b19; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 1.9rem; line-height: 1.15; }
+h2 { font-size: 1.15rem; }
+p { margin: 0; }
+.sub { color: var(--muted); margin-top: 4px; }
+.num { font-variant-numeric: tabular-nums; }
+.label { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+.verdict { border-radius: 10px; padding: 20px; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; border: 1px solid var(--line); background: var(--surface); }
+.verdict[data-tone="lock"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.verdict[data-tone="lock"] .label, .verdict[data-tone="lock"] .vsub { color: var(--accent-ink); opacity: 0.85; }
+.verdict[data-tone="lean"] { background: var(--warn-soft); border-color: var(--warn); }
+.verdict[data-tone="watch"] { background: var(--good-soft); border-color: var(--good); }
+.verdict h2 { font-size: 1.9rem; margin: 4px 0 8px; }
+.vsub { color: var(--muted); }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; align-content: start; }
+.fact b { display: block; font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; }
+
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.note { color: var(--muted); font-size: 0.85rem; }
+
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+input, select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 0; width: 100%; box-sizing: border-box; font-variant-numeric: tabular-nums; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); padding: 8px 14px; font-weight: 600; }
+button.ghost, a.ghost { background: transparent; color: var(--accent); }
+button.tiny { padding: 2px 8px; font-size: 0.8rem; background: transparent; color: var(--muted); border-color: var(--line); font-weight: 500; }
+a.ghost.tiny { padding: 2px 8px; font-size: 0.8rem; border: 1px solid var(--line); border-radius: 6px; font-weight: 500; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+tr.now td { background: var(--accent-soft); font-weight: 600; }
+.up { color: var(--crit); } .down { color: var(--good); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; background: var(--good-soft); color: var(--good); }
+.pill.no { background: var(--crit-soft); color: var(--crit); }
+
+.chart { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--font-body); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .series { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart .dot { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+.chart .dot.mine { fill: var(--accent); }
+.chart .target { stroke: var(--good); stroke-dasharray: 5 4; stroke-width: 1.5; }
+.chart .ceiling { stroke: var(--crit); stroke-dasharray: 5 4; stroke-width: 1.5; }
+.chart .tlabel { fill: var(--good); } .chart .clabel { fill: var(--crit); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); }
+.logform { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 10px; align-items: end; }
+.logrows { display: flex; flex-direction: column; max-height: 190px; overflow-y: auto; border-top: 1px solid var(--line); }
+.logrow { display: grid; grid-template-columns: 6.5rem 4rem minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.logrow span:nth-child(3) { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+ol.steps { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 8px; }
+.themebtn { align-self: flex-start; }
+
+details.card { gap: 14px; }
+  details.card > summary { cursor: pointer; font-family: var(--font-display); font-size: 1.15rem; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .verdict, .grid2 { grid-template-columns: minmax(0, 1fr); }
+  .logform { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .logform button { grid-column: 1 / -1; }
+  h1 { font-size: 1.6rem; }
+  .verdict h2 { font-size: 1.6rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Rate Lock Planner</h1>
+    <p class="sub">53 Mill Road, Morris Plains · decide when to lock, using your own target, ceiling and closing date.</p>
+  </header>
+
+  <section class="verdict" id="verdict" data-tone="watch" aria-live="polite">
+    <div>
+      <div class="label">Where you stand</div>
+      <h2 id="vTitle">Loading</h2>
+      <p class="vsub" id="vWhy"></p>
+    </div>
+    <div class="facts">
+      <div class="fact"><span class="label">Latest rate</span><b class="num" id="fRate">–</b></div>
+      <div class="fact"><span class="label">Days to closing</span><b class="num" id="fDays">–</b></div>
+      <div class="fact"><span class="label">Last day to float</span><b class="num" id="fFloat">–</b></div>
+      <div class="fact"><span class="label">Principal and interest</span><b class="num" id="fPay">–</b></div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Your numbers</h2>
+      <p class="note">Everything here is a starting example. Replace it with your own purchase and lender details.</p>
+      <div class="fields">
+        <div class="field"><label for="price">Purchase price ($)</label><input id="price" type="number" inputmode="decimal" value="770000"></div>
+        <div class="field"><label for="down">Down payment (%)</label><input id="down" type="number" inputmode="decimal" step="0.5" value="10"></div>
+        <div class="field"><label for="term">Loan term (years)</label><select id="term"><option value="30" selected>30</option><option value="20">20</option><option value="15">15</option></select></div>
+        <div class="field"><label for="closing">Closing date</label><input id="closing" type="date" value="2026-12-04"></div>
+        <div class="field"><label for="target">Lock at or below (%)</label><input id="target" type="number" inputmode="decimal" step="0.125" value="7.25"></div>
+        <div class="field"><label for="ceiling">Lock at or above (%)</label><input id="ceiling" type="number" inputmode="decimal" step="0.125" value="7.75"></div>
+        <div class="field"><label for="minlock">Shortest lock offered (days)</label><input id="minlock" type="number" inputmode="numeric" value="15"></div>
+        <div class="field"><label for="cushion">Delay cushion (days)</label><input id="cushion" type="number" inputmode="numeric" value="7"></div>
+        <div class="field"><label for="maxpay">Highest payment you can carry ($/mo, P&amp;I)</label><input id="maxpay" type="number" inputmode="decimal" placeholder="optional"></div>
+        <div class="field"><label for="loanout">Loan amount</label><input id="loanout" type="text" readonly></div>
+      </div>
+      <p class="note" id="maxrateNote"></p>
+      <p class="note">Payments cover principal and interest only, not taxes, insurance or mortgage insurance. The cushion is the number of days past closing your lock should still be valid, in case closing slips.</p>
+    </section>
+
+    <section class="card">
+      <h2>Rate log</h2>
+      <svg id="chart" class="chart" viewBox="0 0 520 230" role="img" aria-label="Logged 30-year rates over time"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="fields" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="field"><label for="fd">Show from</label><input id="fd" type="date"></div>
+        <div class="field"><label for="td">Show through</label><input id="td" type="date"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="ghost tiny" id="applyrange" type="button">Apply date range</button><button class="ghost tiny" id="clearRange" type="button">Show all data</button></div>
+      <p class="note" id="rangeStatus">Showing all logged dates.</p>
+      <form class="logform" id="logform">
+        <div class="field"><label for="ld">Date</label><input id="ld" type="date" required></div>
+        <div class="field"><label for="lr">Rate (%)</label><input id="lr" type="number" step="0.001" inputmode="decimal" required placeholder="7.125"></div>
+        <div class="field"><label for="ls">Source</label><select id="ls"><option>My Glendenning Quote</option><option>Freddie Mac weekly</option><option>Other</option></select></div>
+        <button type="submit">Add</button>
+      </form>
+      <div class="logrows" id="logrows"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="ghost tiny" id="resetlog" type="button">Reset to starting data</button></div>
+      <p class="note">Freddie Mac rows are static weekly national averages for 30-year fixed loans for the past five years, included in this HTML. Once you log your lender's quote, the verdict and payments use your latest quote.</p>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>What a rate move costs you</h2>
+    <p class="note">The change in monthly payment if the rate moves before you lock, on your loan amount.</p>
+    <div class="scroll"><table id="scen"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Discount points check</h2>
+    <div class="fields" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="field"><label for="ptcost">Cost of 1 point (% of loan)</label><input id="ptcost" type="number" step="0.01" value="1"></div>
+      <div class="field"><label for="ptdrop">Rate drop per point (%)</label><input id="ptdrop" type="number" step="0.01" value="0.50"></div>
+      <div class="field"><label for="ptbuy">Points to buy</label><input id="ptbuy" type="number" step="0.25" value="2"></div>
+    </div>
+    <p id="ptout"></p>
+    <p class="note">Seller concessions can sometimes be applied to points. Ask your loan officer how yours is allowed to be used.</p>
+  </section>
+
+  <details class="card">
+    <summary>Lock length options</summary>
+    <p class="note">Longer locks usually cost more. Enter the price your lender quotes for each length, as points of the loan amount (0.25 means 0.25%).</p>
+    <div class="scroll"><table id="locks"></table></div>
+    <p class="note" id="lockNote"></p>
+  </details>
+
+  <button class="ghost themebtn" id="themebtn" type="button">Switch light / dark</button>
+</div>
+
+<script>
+(function () {
+  var KEY = "rate-lock-planner-log-v1";
+  var SEED = [["2021-11-24",3.1],["2021-12-02",3.11],["2021-12-09",3.1],["2021-12-16",3.12],["2021-12-23",3.05],["2021-12-30",3.11],["2022-01-06",3.22],["2022-01-13",3.45],["2022-01-20",3.56],["2022-01-27",3.55],["2022-02-03",3.55],["2022-02-10",3.69],["2022-02-17",3.92],["2022-02-24",3.89],["2022-03-03",3.76],["2022-03-10",3.85],["2022-03-17",4.16],["2022-03-24",4.42],["2022-03-31",4.67],["2022-04-07",4.72],["2022-04-14",5],["2022-04-21",5.11],["2022-04-28",5.1],["2022-05-05",5.27],["2022-05-12",5.3],["2022-05-19",5.25],["2022-05-26",5.1],["2022-06-02",5.09],["2022-06-09",5.23],["2022-06-16",5.78],["2022-06-23",5.81],["2022-06-30",5.7],["2022-07-07",5.3],["2022-07-14",5.51],["2022-07-21",5.54],["2022-07-28",5.3],["2022-08-04",4.99],["2022-08-11",5.22],["2022-08-18",5.13],["2022-08-25",5.55],["2022-09-01",5.66],["2022-09-08",5.89],["2022-09-15",6.02],["2022-09-22",6.29],["2022-09-29",6.7],["2022-10-06",6.66],["2022-10-13",6.92],["2022-10-20",6.94],["2022-10-27",7.08],["2022-11-03",6.95],["2022-11-10",7.08],["2022-11-17",6.61],["2022-11-23",6.58],["2022-12-01",6.49],["2022-12-08",6.33],["2022-12-15",6.31],["2022-12-22",6.27],["2022-12-29",6.42],["2023-01-05",6.48],["2023-01-12",6.33],["2023-01-19",6.15],["2023-01-26",6.13],["2023-02-02",6.09],["2023-02-09",6.12],["2023-02-16",6.32],["2023-02-23",6.5],["2023-03-02",6.65],["2023-03-09",6.73],["2023-03-16",6.6],["2023-03-23",6.42],["2023-03-30",6.32],["2023-04-06",6.28],["2023-04-13",6.27],["2023-04-20",6.39],["2023-04-27",6.43],["2023-05-04",6.39],["2023-05-11",6.35],["2023-05-18",6.39],["2023-05-25",6.57],["2023-06-01",6.79],["2023-06-08",6.71],["2023-06-15",6.69],["2023-06-22",6.67],["2023-06-29",6.71],["2023-07-06",6.81],["2023-07-13",6.96],["2023-07-20",6.78],["2023-07-27",6.81],["2023-08-03",6.9],["2023-08-10",6.96],["2023-08-17",7.09],["2023-08-24",7.23],["2023-08-31",7.18],["2023-09-07",7.12],["2023-09-14",7.18],["2023-09-21",7.19],["2023-09-28",7.31],["2023-10-05",7.49],["2023-10-12",7.57],["2023-10-19",7.63],["2023-10-26",7.79],["2023-11-02",7.76],["2023-11-09",7.5],["2023-11-16",7.44],["2023-11-22",7.29],["2023-11-30",7.22],["2023-12-07",7.03],["2023-12-14",6.95],["2023-12-21",6.67],["2023-12-28",6.61],["2024-01-04",6.62],["2024-01-11",6.66],["2024-01-18",6.6],["2024-01-25",6.69],["2024-02-01",6.63],["2024-02-08",6.64],["2024-02-15",6.77],["2024-02-22",6.9],["2024-02-29",6.94],["2024-03-07",6.88],["2024-03-14",6.74],["2024-03-21",6.87],["2024-03-28",6.79],["2024-04-04",6.82],["2024-04-11",6.88],["2024-04-18",7.1],["2024-04-25",7.17],["2024-05-02",7.22],["2024-05-09",7.09],["2024-05-16",7.02],["2024-05-23",6.94],["2024-05-30",7.03],["2024-06-06",6.99],["2024-06-13",6.95],["2024-06-20",6.87],["2024-06-27",6.86],["2024-07-03",6.95],["2024-07-11",6.89],["2024-07-18",6.77],["2024-07-25",6.78],["2024-08-01",6.73],["2024-08-08",6.47],["2024-08-15",6.49],["2024-08-22",6.46],["2024-08-29",6.35],["2024-09-05",6.35],["2024-09-12",6.2],["2024-09-19",6.09],["2024-09-26",6.08],["2024-10-03",6.12],["2024-10-10",6.32],["2024-10-17",6.44],["2024-10-24",6.54],["2024-10-31",6.72],["2024-11-07",6.79],["2024-11-14",6.78],["2024-11-21",6.84],["2024-11-27",6.81],["2024-12-05",6.69],["2024-12-12",6.6],["2024-12-19",6.72],["2024-12-26",6.85],["2025-01-02",6.91],["2025-01-09",6.93],["2025-01-16",7.04],["2025-01-23",6.96],["2025-01-30",6.95],["2025-02-06",6.89],["2025-02-13",6.87],["2025-02-20",6.85],["2025-02-27",6.76],["2025-03-06",6.63],["2025-03-13",6.65],["2025-03-20",6.67],["2025-03-27",6.65],["2025-04-03",6.64],["2025-04-10",6.62],["2025-04-17",6.83],["2025-04-24",6.81],["2025-05-01",6.76],["2025-05-08",6.76],["2025-05-15",6.81],["2025-05-22",6.86],["2025-05-29",6.89],["2025-06-05",6.85],["2025-06-12",6.84],["2025-06-18",6.81],["2025-06-26",6.77],["2025-07-03",6.67],["2025-07-10",6.72],["2025-07-17",6.75],["2025-07-24",6.74],["2025-07-31",6.72],["2025-08-07",6.63],["2025-08-14",6.58],["2025-08-21",6.58],["2025-08-28",6.56],["2025-09-04",6.5],["2025-09-11",6.35],["2025-09-18",6.26],["2025-09-25",6.3],["2025-10-02",6.34],["2025-10-09",6.3],["2025-10-16",6.27],["2025-10-23",6.19],["2025-10-30",6.17],["2025-11-06",6.22],["2025-11-13",6.24],["2025-11-20",6.26],["2025-11-26",6.23],["2025-12-04",6.19],["2025-12-11",6.22],["2025-12-18",6.21],["2025-12-24",6.18],["2025-12-31",6.15],["2026-01-08",6.16],["2026-01-15",6.06],["2026-01-22",6.09],["2026-01-29",6.1],["2026-02-05",6.11],["2026-02-12",6.09],["2026-02-19",6.01],["2026-02-26",5.98],["2026-03-05",6],["2026-03-12",6.11],["2026-03-19",6.22],["2026-03-26",6.38],["2026-04-02",6.46],["2026-04-09",6.37],["2026-04-16",6.3],["2026-04-23",6.23],["2026-04-30",6.3],["2026-05-07",6.37],["2026-05-14",6.36],["2026-05-21",6.51],["2026-05-28",6.53],["2026-06-04",6.48],["2026-06-11",6.52],["2026-06-18",6.47],["2026-06-25",6.49],["2026-07-02",6.43],["2026-07-09",6.49],["2026-07-16",6.55],["2026-07-23",6.58],["2026-07-30",6.66],["2026-08-06",6.69],["2026-08-13",6.67],["2026-08-20",6.65],["2026-08-27",6.66],["2026-09-03",6.71],["2026-09-10",6.76],["2026-09-17",6.95],["2026-09-24",7.03],["2026-10-01",7.28],["2026-10-08",7.4],["2026-10-15",7.4],["2026-10-22",7.32],["2026-10-29",7.24],["2026-11-05",7.18],["2026-11-12",7.11],["2026-11-19",7.28]].map(function (x) { return { d: x[0], r: x[1], s: "Freddie Mac weekly" }; });
+  SEED.push({ d: "2026-11-20", r: 7.5, s: "My Glendenning Quote" });
+  var log = load();
+  function load() {
+    try {
+      var v = JSON.parse(localStorage.getItem(KEY));
+      if (Array.isArray(v) && v.length) {
+        var merged = SEED.slice();
+        v.forEach(function (saved) {
+          var key = saved.d + "|" + saved.r + "|" + saved.s;
+          var exists = merged.some(function (entry) { return entry.d + "|" + entry.r + "|" + entry.s === key; });
+          if (!exists) merged.push(saved);
+        });
+        return merged;
+      }
+    } catch (e) {}
+    return SEED.slice();
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} }
+  function $(id) { return document.getElementById(id); }
+  function num(id) { var v = parseFloat($(id).value); return isFinite(v) ? v : 0; }
+  function money(n) { return "$" + Math.round(n).toLocaleString("en-US"); }
+  function signed(n) { return (n >= 0 ? "+" : "−") + "$" + Math.abs(Math.round(n)).toLocaleString("en-US"); }
+  function dt(s) { return new Date(s + "T12:00:00"); }
+  function fmtDate(d) { return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
+  function fmtShort(d) { return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
+  function pmt(loan, ratePct, years) {
+    var r = ratePct / 100 / 12, n = years * 12;
+    if (r === 0) return loan / n;
+    return loan * r / (1 - Math.pow(1 + r, -n));
+  }
+  function maxRateFor(loan, pay, years) {
+    var lo = 0, hi = 20;
+    if (pmt(loan, hi, years) <= pay) return hi;
+    for (var i = 0; i < 60; i++) { var mid = (lo + hi) / 2; if (pmt(loan, mid, years) <= pay) lo = mid; else hi = mid; }
+    return lo;
+  }
+  function sorted() { return log.slice().sort(function (a, b) { return a.d < b.d ? -1 : a.d > b.d ? 1 : 0; }); }
+  function today() { var n = new Date(); n.setHours(12, 0, 0, 0); return n; }
+  function dayDiff(a, b) { return Math.round((a - b) / 864e5); }
+
+  var lockDefaults = { 15: 0, 30: 0, 45: 0.125, 60: 0.25, 90: 0.5 };
+  var lockVals = (function () { try { return JSON.parse(localStorage.getItem("rate-lock-planner-locks-v1")) || lockDefaults; } catch (e) { return lockDefaults; } })();
+  function locks(c) {
+    var need = c.days === null ? null : c.days + c.cushion;
+    var h = "<tr><th>Lock length</th><th>Price (points)</th><th>Cost</th><th>Covers closing?</th></tr>";
+    var best = null;
+    [15, 30, 45, 60, 90].forEach(function (L) {
+      var pts = parseFloat(lockVals[L]); if (!isFinite(pts)) pts = 0;
+      var covers = need !== null && L >= need;
+      if (covers && best === null) best = L;
+      h += "<tr><td>" + L + " days</td><td><input class=\"lockin\" data-l=\"" + L + "\" type=\"number\" step=\"0.125\" value=\"" + pts + "\" style=\"width:6rem;text-align:right\" aria-label=\"Points for " + L + " day lock\"></td><td>" + money(c.loan * pts / 100) + "</td><td>" + (need === null ? "–" : covers ? '<span class="pill">Yes</span>' : '<span class="pill no">No</span>') + "</td></tr>";
+    });
+    $("locks").innerHTML = h;
+    Array.prototype.forEach.call(document.querySelectorAll(".lockin"), function (el) {
+      el.addEventListener("change", function () {
+        lockVals[el.dataset.l] = el.value;
+        try { localStorage.setItem("rate-lock-planner-locks-v1", JSON.stringify(lockVals)); } catch (e) {}
+        render();
+      });
+    });
+    if (need === null) $("lockNote").textContent = "Enter a closing date to see which lock covers it.";
+    else if (best) $("lockNote").textContent = "To lock today and cover closing plus your cushion (" + need + " days), the shortest option that works is " + best + " days. Waiting until a shorter lock covers closing is cheaper, but only if you accept the rate risk until then.";
+    else $("lockNote").textContent = "Closing is more than 90 days out, so no listed lock covers it today. Ask your lender about longer locks or when to start the clock.";
+  }
+
+  function compute() {
+    var price = num("price"), down = num("down"), term = num("term") || 30;
+    var loan = Math.max(0, price * (1 - down / 100));
+    var rows = sorted();
+    var mine = rows.filter(function (x) { return x.s === "My Glendenning Quote"; });
+    var basis = mine.length ? mine : rows;
+    var latest = basis.length ? basis[basis.length - 1] : null;
+    var closing = $("closing").value ? dt($("closing").value) : null;
+    var days = closing ? dayDiff(closing, today()) : null;
+    var minlock = num("minlock") || 30, cushion = num("cushion");
+    var lastFloat = closing ? new Date(closing.getTime() + (cushion - minlock) * 864e5) : null;
+    var floatDays = lastFloat ? dayDiff(lastFloat, today()) : null;
+    var from = $("fd") ? $("fd").value : "";
+    var to = $("td") ? $("td").value : "";
+    var visibleRows = rows.filter(function (x) { return (!from || x.d >= from) && (!to || x.d <= to); });
+    if (visibleRows.length) $("rangeStatus").textContent = "Showing " + visibleRows.length + " logged row" + (visibleRows.length === 1 ? "" : "s") + (from || to ? " for " + (from || "the earliest date") + " through " + (to || "the latest date") + "." : ".");
+    else $("rangeStatus").textContent = "No logged rows fall within this date range.";
+    return { price: price, loan: loan, term: term, rows: rows, visibleRows: visibleRows, basis: basis, latest: latest, closing: closing, days: days, lastFloat: lastFloat, floatDays: floatDays, minlock: minlock, cushion: cushion };
+  }
+
+  function verdict(c) {
+    var v = $("verdict"), t = $("vTitle"), w = $("vWhy");
+    var target = num("target"), ceil = num("ceiling");
+    if (!c.latest) { v.dataset.tone = "watch"; t.textContent = "Add a rate"; w.textContent = "Log a quote below to get a recommendation."; return; }
+    var r = c.latest.r, min = Math.min.apply(null, c.basis.map(function (x) { return x.r; }));
+    var tone, title, why;
+    if (ceil && r >= ceil) { tone = "lock"; title = "Lock now"; why = "The latest rate, " + r.toFixed(3) + "%, is at or above the ceiling of " + ceil.toFixed(3) + "% you set. Waiting risks a payment you said you would not accept."; }
+    else if (c.floatDays !== null && c.floatDays <= 0) { tone = "lock"; title = "Lock now"; why = "You are at or past the last day to float. A lock placed any later may not cover closing plus your cushion."; }
+    else if (target && r <= target) { tone = "lock"; title = "Lock now"; why = "The latest rate, " + r.toFixed(3) + "%, has reached your target of " + target.toFixed(3) + "%. Lock the win instead of hoping for more."; }
+    else if (r - min >= 0.25) { tone = "lean"; title = "Lean toward locking"; why = "The rate is " + (r - min).toFixed(3) + " points above the lowest you have logged. Rebounds like this can keep going."; }
+    else if (c.floatDays !== null && c.floatDays <= 7) { tone = "lean"; title = "Lean toward locking"; why = "Only " + c.floatDays + " day" + (c.floatDays === 1 ? "" : "s") + " remain before the last day to float."; }
+    else { tone = "watch"; title = "Keep watching"; why = "The rate sits between your target and ceiling, and there is time before the lock deadline. Log a fresh quote at least weekly."; }
+    v.dataset.tone = tone; t.textContent = title; w.textContent = why;
+  }
+
+  function facts(c) {
+    $("fRate").textContent = c.latest ? c.latest.r.toFixed(3) + "%" : "–";
+    $("fDays").textContent = c.days === null ? "–" : c.days;
+    $("fFloat").textContent = c.lastFloat ? fmtShort(c.lastFloat) + (c.floatDays !== null ? " (" + c.floatDays + "d)" : "") : "–";
+    $("fPay").textContent = c.latest ? money(pmt(c.loan, c.latest.r, c.term)) + "/mo" : "–";
+    $("loanout").value = money(c.loan);
+    var mp = num("maxpay");
+    $("maxrateNote").textContent = mp > 0 && c.loan > 0 ? "A payment cap of " + money(mp) + " allows rates up to about " + maxRateFor(c.loan, mp, c.term).toFixed(3) + "% on this loan. Consider setting your ceiling at or below that." : "";
+  }
+
+  function scenarios(c) {
+    var base = c.latest ? c.latest.r : 7;
+    var basePay = pmt(c.loan, base, c.term);
+    var deltas = [-0.5, -0.25, -0.125, 0, 0.125, 0.25, 0.5, 0.75];
+    var h = "<tr><th>Rate change</th><th>Rate</th><th>Monthly</th><th>vs now</th><th>5 years</th></tr>";
+    deltas.forEach(function (d) {
+      var r = base + d, p = pmt(c.loan, r, c.term), diff = p - basePay;
+      var cls = d > 0 ? "up" : d < 0 ? "down" : "";
+      h += "<tr" + (d === 0 ? ' class="now"' : "") + "><td>" + (d === 0 ? "Now" : (d > 0 ? "+" : "−") + Math.abs(d).toFixed(3) + "%") + "</td><td>" + r.toFixed(3) + "%</td><td>" + money(p) + "</td><td class=\"" + cls + "\">" + (d === 0 ? "–" : signed(diff)) + "</td><td class=\"" + cls + "\">" + (d === 0 ? "–" : signed(diff * 60)) + "</td></tr>";
+    });
+    $("scen").innerHTML = h;
+  }
+
+  function points(c) {
+    var cost = num("ptcost"), drop = num("ptdrop"), buy = num("ptbuy");
+    var base = c.latest ? c.latest.r : 7;
+    var upfront = c.loan * cost * buy / 100;
+    var newRate = base - drop * buy;
+    var save = pmt(c.loan, base, c.term) - pmt(c.loan, newRate, c.term);
+    var out = $("ptout");
+    if (upfront <= 0 || save <= 0) { out.textContent = "Enter points to buy and a rate drop per point to see the break-even."; return; }
+    var months = upfront / save;
+    out.textContent = "Buying " + buy + " point" + (buy === 1 ? "" : "s") + " costs " + money(upfront) + " and takes the rate to " + newRate.toFixed(3) + "%, saving " + money(save) + " a month. You break even after about " + Math.ceil(months) + " months (" + (months / 12).toFixed(1) + " years). It pays off only if you keep the loan longer than that.";
+  }
+
+  function chart(c) {
+    var svg = $("chart"), rows = c.visibleRows, W = 520, H = 230, L = 44, R = 16, T = 14, B = 30;
+    if (!rows.length) { svg.innerHTML = '<text x="' + L + '" y="' + (H / 2) + '">No rates fall within this date range.</text>'; $("legend").innerHTML = ""; return; }
+    var target = num("target"), ceil = num("ceiling");
+    var vals = rows.map(function (x) { return x.r; });
+    if (target) vals.push(target); if (ceil) vals.push(ceil);
+    var lo = Math.floor((Math.min.apply(null, vals) - 0.05) * 10) / 10, hi = Math.ceil((Math.max.apply(null, vals) + 0.05) * 10) / 10;
+    if (hi - lo < 0.4) { hi = lo + 0.4; }
+    var t0 = dt(rows[0].d).getTime(), t1 = dt(rows[rows.length - 1].d).getTime();
+    if (t1 === t0) { t0 -= 864e5 * 3; t1 += 864e5 * 3; }
+    function X(t) { return L + (t - t0) / (t1 - t0) * (W - L - R); }
+    function Y(v) { return T + (hi - v) / (hi - lo) * (H - T - B); }
+    var step = (hi - lo) > 1.2 ? 0.25 : 0.1, s = "";
+    for (var g = lo; g <= hi + 1e-9; g += step) { s += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(g) + '" y2="' + Y(g) + '"/><text x="' + (L - 6) + '" y="' + (Y(g) + 4) + '" text-anchor="end">' + g.toFixed(2) + '</text>'; }
+    if (target) s += '<line class="target" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(target) + '" y2="' + Y(target) + '"/><text class="tlabel" x="' + (W - R) + '" y="' + (Y(target) - 4) + '" text-anchor="end">target ' + target.toFixed(3) + '</text>';
+    if (ceil) s += '<line class="ceiling" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(ceil) + '" y2="' + Y(ceil) + '"/><text class="clabel" x="' + (W - R) + '" y="' + (Y(ceil) - 4) + '" text-anchor="end">ceiling ' + ceil.toFixed(3) + '</text>';
+    function line(list, extra) {
+      if (list.length < 2) return "";
+      var p = list.map(function (x) { return X(dt(x.d).getTime()).toFixed(1) + "," + Y(x.r).toFixed(1); }).join(" ");
+      return '<polyline class="series" ' + extra + ' points="' + p + '"/>';
+    }
+    s += line(rows.filter(function (x) { return x.s !== "My Glendenning Quote"; }), 'style="stroke:var(--muted);stroke-width:1.5;opacity:0.7"');
+    s += line(rows.filter(function (x) { return x.s === "My Glendenning Quote"; }), "");
+    rows.forEach(function (x, i) {
+      var cx = X(dt(x.d).getTime()), cy = Y(x.r), mine = x.s === "My Glendenning Quote";
+      s += '<circle class="dot' + (mine ? " mine" : "") + '" cx="' + cx + '" cy="' + cy + '" r="4"/>';
+      if (i === rows.length - 1) s += '<text x="' + Math.min(cx, W - R - 16) + '" y="' + (cy + 18) + '" text-anchor="middle">' + x.r.toFixed(3) + '</text>';
+    });
+    s += '<text x="' + L + '" y="' + (H - 8) + '">' + fmtShort(new Date(t0)) + '</text><text x="' + (W - R) + '" y="' + (H - 8) + '" text-anchor="end">' + fmtShort(new Date(t1)) + '</text>';
+    svg.innerHTML = s;
+    $("legend").innerHTML = '<span>○ Freddie Mac weekly average</span><span>● Your lender quote</span><span style="color:var(--good)">- - Target</span><span style="color:var(--crit)">- - Ceiling</span>';
+  }
+
+  function logList(c) {
+    var rows = c.visibleRows.slice().reverse();
+    $("logrows").innerHTML = rows.map(function (x) {
+      return '<div class="logrow"><span>' + fmtDate(dt(x.d)) + '</span><span><b>' + x.r.toFixed(3) + '%</b></span><span>' + x.s + '</span><button class="tiny" type="button" data-del="' + x.d + "|" + x.r + "|" + x.s + '" aria-label="Remove entry">Remove</button></div>';
+    }).join("");
+    Array.prototype.forEach.call(document.querySelectorAll("[data-del]"), function (b) {
+      b.addEventListener("click", function () {
+        var k = b.dataset.del;
+        log = log.filter(function (x) { return (x.d + "|" + x.r + "|" + x.s) !== k; });
+        save(); render();
+      });
+    });
+  }
+
+  function render() {
+    var c = compute();
+    verdict(c); facts(c); scenarios(c); locks(c); points(c); chart(c); logList(c);
+  }
+
+  ["price", "down", "term", "closing", "target", "ceiling", "minlock", "cushion", "maxpay", "ptcost", "ptdrop", "ptbuy"].forEach(function (id) {
+    $(id).addEventListener("input", render);
+    $(id).addEventListener("change", render);
+  });
+  ["fd", "td"].forEach(function (id) {
+    $(id).addEventListener("change", render);
+  });
+  $("applyrange").addEventListener("click", render);
+  $("clearRange").addEventListener("click", function () {
+    $("fd").value = "";
+    $("td").value = "";
+    render();
+  });
+  $("logform").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var r = parseFloat($("lr").value);
+    if (!$("ld").value || !isFinite(r)) return;
+    log.push({ d: $("ld").value, r: r, s: $("ls").value });
+    save(); $("lr").value = ""; render();
+  });
+  $("resetlog").addEventListener("click", function () { log = SEED.slice(); save(); render(); });
+  $("themebtn").addEventListener("click", function () {
+    var root = document.documentElement;
+    var dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+
+  var n = today();
+  var endDate = n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0");
+  var start = new Date(n.getTime());
+  start.setMonth(start.getMonth() - 2);
+  var startDate = start.getFullYear() + "-" + String(start.getMonth() + 1).padStart(2, "0") + "-" + String(start.getDate()).padStart(2, "0");
+  $("ld").value = endDate;
+  $("fd").value = startDate;
+  $("td").value = endDate;
+  render();
+})();
+</script>
+
+</body></html>
